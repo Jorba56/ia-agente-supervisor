@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot Multi-Sesión</title>
+    <style>
+        :root {
+            --bg-color: #343541;
+            --sidebar-bg: #202123;
+            --chat-bg: #444654;
+            --text-color: #ececf1;
+            --accent-color: #10a37f;
+            --hover-color: #2A2B32;
+        }
+
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color); color: var(--text-color); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Barra Lateral */
+        #sidebar { width: 260px; background-color: var(--sidebar-bg); display: flex; flex-direction: column; padding: 10px; border-right: 1px solid #4d4d4f; }
+        #btn-nuevo-chat { background-color: transparent; color: white; border: 1px solid #565869; border-radius: 6px; padding: 12px; cursor: pointer; text-align: left; transition: all 0.2s; margin-bottom: 20px; font-weight: bold; }
+        #btn-nuevo-chat:hover { background-color: var(--hover-color); }
+        #lista-chats { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+        .item-chat { padding: 12px; border-radius: 6px; cursor: pointer; color: #ececf1; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9em; }
+        .item-chat:hover { background-color: var(--hover-color); }
+        .item-chat.activo { background-color: var(--chat-bg); }
+        .btn-borrar { background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 1.1em; display: none; }
+        .item-chat:hover .btn-borrar { display: block; }
+
+        /* Contenedor Principal */
+        #main-container { flex-grow: 1; display: flex; flex-direction: column; position: relative; }
+
+        #chat-box { flex-grow: 1; overflow-y: auto; padding: 20px 15%; display: flex; flex-direction: column; gap: 20px; }
+        .message-wrapper { display: flex; width: 100%; }
+        .message-wrapper.user { justify-content: flex-end; }
+        .message-wrapper.bot { justify-content: flex-start; }
+        .message { max-width: 80%; padding: 15px 20px; border-radius: 8px; line-height: 1.5; font-size: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); white-space: pre-wrap; }
+        .user-message { background-color: var(--accent-color); color: white; border-bottom-right-radius: 2px; }
+        .bot-message { background-color: var(--chat-bg); color: #ececf1; border-bottom-left-radius: 2px; border: 1px solid #565869; }
+
+        /* Zona de Input */
+        #input-container { padding: 20px 15%; background: linear-gradient(180deg, rgba(52,53,65,0) 0%, var(--bg-color) 30%); }
+        .input-box { display: flex; background-color: #40414f; border-radius: 12px; box-shadow: 0 0 15px rgba(0,0,0,0.1); border: 1px solid #565869; overflow: hidden; }
+        #user-input { flex-grow: 1; background: transparent; border: none; color: white; padding: 16px; font-size: 16px; outline: none; resize: none; max-height: 200px; }
+        #btn-enviar { background-color: transparent; border: none; color: var(--accent-color); padding: 0 20px; cursor: pointer; transition: color 0.2s; font-size: 20px; }
+        #btn-enviar:hover { color: #0df0b5; }
+        #btn-enviar:disabled { color: #565869; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <button id="btn-nuevo-chat" onclick="crearNuevoChat()">+ Nuevo Chat</button>
+    <div id="lista-chats">
+    </div>
+</div>
+
+<div id="main-container">
+    <div id="chat-box"></div>
+
+    <div id="input-container">
+        <div class="input-box">
+            <input type="text" id="user-input" placeholder="Pregunta sobre la BBDD o los PDFs..." onkeypress="manejarEnter(event)">
+            <button id="btn-enviar" onclick="enviarMensaje()">➤</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chat-box');
+    const userInput = document.getElementById('user-input');
+    const btnEnviar = document.getElementById('btn-enviar');
+    const listaChatsDiv = document.getElementById('lista-chats');
+
+    // Estructura de datos en LocalStorage: { "chat_123": [{role:"user", content:"hola"}], "chat_456": [...] }
+    let todosLosChats = JSON.parse(localStorage.getItem("mis_chats")) || {};
+    let chatIdActual = localStorage.getItem("chat_id_actual");
+
+    // Al arrancar
+    window.onload = () => {
+        if (!chatIdActual || !todosLosChats[chatIdActual]) {
+            crearNuevoChat();
+        } else {
+            pintarListaChats();
+            cargarChatEnPantalla(chatIdActual);
+        }
+    };
+
+    function guardarDatosLocal() {
+        localStorage.setItem("mis_chats", JSON.stringify(todosLosChats));
+        localStorage.setItem("chat_id_actual", chatIdActual);
+    }
+
+    function crearNuevoChat() {
+        chatIdActual = "chat_" + Date.now();
+        todosLosChats[chatIdActual] = []; // Array vacío para el nuevo historial
+        guardarDatosLocal();
+        pintarListaChats();
+        cargarChatEnPantalla(chatIdActual);
+        userInput.focus();
+    }
+
+    function cambiarChat(id) {
+        chatIdActual = id;
+        guardarDatosLocal();
+        pintarListaChats();
+        cargarChatEnPantalla(chatIdActual);
+    }
+
+    function borrarChat(id, event) {
+        event.stopPropagation(); // Evita que se seleccione el chat al borrarlo
+        delete todosLosChats[id];
+
+        // Si borramos el chat actual, creamos uno nuevo o saltamos a otro
+        if (chatIdActual === id) {
+            const chatsRestantes = Object.keys(todosLosChats);
+            if (chatsRestantes.length > 0) {
+                chatIdActual = chatsRestantes[0];
+            } else {
+                crearNuevoChat();
+                return; // crearNuevoChat ya guarda y pinta
+            }
+        }
+        guardarDatosLocal();
+        pintarListaChats();
+        cargarChatEnPantalla(chatIdActual);
+    }
+
+    function pintarListaChats() {
+        listaChatsDiv.innerHTML = '';
+        // Ordenamos para que los más nuevos salgan arriba
+        const idsOrdenados = Object.keys(todosLosChats).sort().reverse();
+
+        idsOrdenados.forEach(id => {
+            const historial = todosLosChats[id];
+            // El título es el primer mensaje del usuario, o "Nuevo Chat" si está vacío
+            let titulo = "Nuevo Chat";
+            if (historial.length > 0) {
+                titulo = historial[0].content.substring(0, 25) + "...";
+            }
+
+            const div = document.createElement('div');
+            div.className = `item-chat ${id === chatIdActual ? 'activo' : ''}`;
+            div.onclick = () => cambiarChat(id);
+
+            div.innerHTML = `
+                    <span>${titulo}</span>
+                    <button class="btn-borrar" onclick="borrarChat('${id}', event)">✖</button>
+                `;
+            listaChatsDiv.appendChild(div);
+        });
+    }
+
+    function cargarChatEnPantalla(id) {
+        chatBox.innerHTML = ''; // Limpiamos pantalla
+        const historial = todosLosChats[id];
+        historial.forEach(msg => {
+            agregarMensajePantalla(msg.content, msg.role === 'user');
+        });
+    }
+
+    function agregarMensajePantalla(texto, esUsuario) {
+        const wrapper = document.createElement('div');
+        wrapper.className = `message-wrapper ${esUsuario ? 'user' : 'bot'}`;
+
+        const div = document.createElement('div');
+        div.className = `message ${esUsuario ? 'user-message' : 'bot-message'}`;
+        div.innerText = texto;
+
+        wrapper.appendChild(div);
+        chatBox.appendChild(wrapper);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function manejarEnter(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            enviarMensaje();
+        }
+    }
+
+    async function enviarMensaje() {
+        const texto = userInput.value.trim();
+        if (!texto) return;
+
+        userInput.value = '';
+        userInput.disabled = true;
+        btnEnviar.disabled = true;
+
+        agregarMensajePantalla(texto, true);
+
+        // SOLO SE ENVÍA ESTO: el mensaje y el ID del chat actual.
+        // El backend sacará el resto de mensajes desde MySQL.
+        const payload = {
+            session_id: chatIdActual,
+            mensaje: texto
+        };
+
+        try {
+            const response = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+
+            if (data.status === 'ok') {
+                agregarMensajePantalla(data.respuesta, false);
+
+                // ← GUARDA AMBOS MENSAJES EN LOCALSTORAGE
+                todosLosChats[chatIdActual].push({ role: "user", content: texto });
+                todosLosChats[chatIdActual].push({ role: "assistant", content: data.respuesta });
+                guardarDatosLocal();
+                pintarListaChats(); // Actualiza el título del chat con el primer mensaje
+            } else {
+                agregarMensajePantalla(`❌ Error: ${data.respuesta}`, false);
+            }
+        } catch (err) {
+            agregarMensajePantalla('❌ Error crítico de servidor.', false);
+        }
+        finally {
+            userInput.disabled = false;
+            btnEnviar.disabled = false;
+            userInput.focus();
+        }
+    }
+</script>
+</body>
+</html>
