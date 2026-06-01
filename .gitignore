@@ -1,0 +1,8 @@
+# Ignorar la carpeta del entorno virtual
+.venv/
+
+# Ignorar  el contenido dentro de la carpeta documentos
+documentos/*
+
+# Excepción: NO ignorar el archivo .gitkeep (necesario para mantener la carpeta)
+!documentos/.gitkeep
