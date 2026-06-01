@@ -25,7 +25,7 @@ El sistema es capaz de auditar código, analizar PDFs de documentación técnica
 * **Ollama:** Instalado y corriendo localmente en el puerto `11434`. Debe tener descargado el modelo objetivo (ej. `mistral` o `llama3.2`).
 * **Base de Datos:** Un servidor MySQL ejecutándose con la base de datos del proyecto (`examenes`).
 
-*Nota de rendimiento: El procesamiento local del agente worker (Ollama) aprovechará automáticamente la aceleración de hardware disponible en el equipo (como una GPU RTX 2070 Mini y los 16 GB de RAM en Dual Channel), lo que garantiza una generación de texto fluida y una latencia mínima al no depender de colas en la nube para la redacción final.*
+*Nota de rendimiento: El procesamiento local del agente worker (Ollama) aprovechará automáticamente la aceleración de hardware disponible en el equipo, lo que garantiza una generación de texto fluida y una latencia mínima al no depender de colas en la nube para la redacción final.*
 
 ##  Instalación y Configuración
 
