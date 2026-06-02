@@ -7,7 +7,7 @@ import os
 import logging
 
 from langgraph.prebuilt import create_react_agent
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama, OllamaEmbeddings # <-- ¡Ahora importamos OllamaEmbeddings!
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from sqlalchemy import create_engine, MetaData, select
@@ -16,10 +16,7 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.utilities import SQLDatabase
-
-# (Mantenemos los embeddings de Google para no tener que revectorizar tus PDFs actuales,
-# pero el razonamiento ya será 100% Ollama)
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from dotenv import load_dotenv
 
 # ════════════════════════════════════════════════════════════
 # # CONFIGURACIÓN
@@ -27,10 +24,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
-# Mantenemos la API KEY solo para los Embeddings (vectorización de PDFs)
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-
+load_dotenv()
 
 URL_BBDD       = os.environ.get("DATABASE_URL")
 CARPETA_PDFS   = os.environ.get("PDF_DIR", "documentos")
@@ -39,9 +33,9 @@ CARPETA_PDFS   = os.environ.get("PDF_DIR", "documentos")
 URL_OLLAMA     = "https://ollama-production-c952.up.railway.app"
 
 # Modelos Locales
-MODELO_WORKER     = "mistral"      # El que redacta el texto final de forma natural
-MODELO_SUPERVISOR = "qwen2.5:7b"   # El que razona y genera JSON (Asegúrate de hacer 'ollama pull qwen2.5:7b' en Railway)
-MODELO_EMBED      = "models/gemini-embedding-2"
+MODELO_WORKER     = "mistral"            # El que redacta el texto final
+MODELO_SUPERVISOR = "qwen2.5:7b"         # El experto en JSON
+MODELO_EMBED      = "nomic-embed-text"   # El experto en vectorizar PDFs localmente
 TEMPERATURA       = 0.0
 
 # ════════════════════════════════════════════════════════════
@@ -63,7 +57,7 @@ class VeredictoSupervisor(BaseModel):
 # ════════════════════════════════════════════════════════════
 # APP
 # ════════════════════════════════════════════════════════════
-app = FastAPI(title="Chatbot Agente IA (Local Edition)", version="3.0.0")
+app = FastAPI(title="Chatbot Agente IA (100% Local & Private Edition)", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -132,7 +126,7 @@ def buscar_en_documentos(pregunta) -> str:
 
 
 # ════════════════════════════════════════════════════════════
-# B. RAG — LECTURA DE PDFs
+# B. RAG — LECTURA DE PDFs (100% PRIVADA)
 # ════════════════════════════════════════════════════════════
 os.makedirs(CARPETA_PDFS, exist_ok=True)
 _retriever = None
@@ -148,7 +142,9 @@ def cargar_pdfs() -> None:
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = splitter.split_documents(docs)
-        embeddings = GoogleGenerativeAIEmbeddings(model=MODELO_EMBED, task_type="retrieval_document")
+
+        # Utilizamos OllamaEmbeddings en lugar de Google
+        embeddings = OllamaEmbeddings(model=MODELO_EMBED, base_url=URL_OLLAMA)
 
         primer_split = splits[0]
         vectorstore = FAISS.from_texts([primer_split.page_content], embeddings, metadatas=[primer_split.metadata])
@@ -156,7 +152,7 @@ def cargar_pdfs() -> None:
             vectorstore.add_texts([split.page_content], metadatas=[split.metadata])
 
         _retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-        log.info(f"✅ RAG cargado: {len(docs)} PDFs → {len(splits)} fragmentos")
+        log.info(f"✅ RAG Privado cargado: {len(docs)} PDFs → {len(splits)} fragmentos")
     except Exception as e:
         log.error(f"❌ Error cargando PDFs: {e}")
         _retriever = None
@@ -248,14 +244,23 @@ def chatear(peticion: PeticionChat):
         # PASO 1: Ollama Router decide con Pydantic (Sin Regex!)
         # ---------------------------------------------------------
         prompt_decision = f"""
-        Eres un router inteligente. Analiza la pregunta del usuario y decide qué herramienta usar.
-        Pregunta: "{peticion.mensaje}"
-        Opciones de herramienta: buscar_en_documentos, consultar_base_datos, ver_tablas, ninguna.
-        Si preguntan por información técnica o manuales, extrae toda la pregunta como parámetro.
+        Eres un router inteligente. Tu única misión es clasificar la intención de esta petición:
+        Petición: "{peticion.mensaje}"
+
+        REGLAS MILITARES DE CLASIFICACIÓN:
+        1. SALUDOS O CHARLA: Si el usuario dice "Hola", "¿Estás ahí?", o hace preguntas conversacionales sin pedir datos técnicos, la herramienta DEBE SER "ninguna" y el parámetro vacío.
+        2. TEORÍA Y MANUALES: Si pregunta por cómo funciona algo, reglas, código o PDFs, usa "buscar_en_documentos" y pasa la pregunta completa como parámetro.
+        3. DATOS REALES: Si pide contar registros, ver notas, usuarios o estadísticas, usa "consultar_base_datos".
+        4. EXPLORACIÓN: Si pregunta "¿Qué tablas hay?", usa "ver_tablas".
+
+        EJEMPLOS DE ENRUTAMIENTO CORRECTO:
+        - "Hola, ¿estás listo para operar?" -> herramienta: "ninguna", parametro: ""
+        - "Buenos días" -> herramienta: "ninguna", parametro: ""
+        - "¿Cómo declaro una variable?" -> herramienta: "buscar_en_documentos", parametro: "¿Cómo declaro una variable?"
+        - "¿Cuántas partidas hay?" -> herramienta: "consultar_base_datos", parametro: "SELECT COUNT(*) FROM partidas;"
         """
 
         try:
-            # Magia pura: Ollama nos devuelve un objeto Python estructurado directamente
             decision = enrutador.invoke(prompt_decision)
             herramienta_elegida = decision.herramienta
             parametro = decision.parametro
@@ -283,7 +288,7 @@ def chatear(peticion: PeticionChat):
         log.info(f"[HERRAMIENTA] {str(resultado_herramienta)[:100]}...")
 
         # ---------------------------------------------------------
-        # PASO 3: Ollama Worker (Mistral) redacta la respuesta
+        # PASO 3: Ollama Worker redacta la respuesta
         # ---------------------------------------------------------
         historial_texto = "".join([f"{'Usuario' if isinstance(m, HumanMessage) else 'Asistente'}: {m.content}\n" for m in list(memoria.messages)[-6:]])
 
