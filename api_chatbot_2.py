@@ -76,9 +76,15 @@ app.add_middleware(
 try:
     db = SQLDatabase.from_uri(URL_BBDD)
     log.info(f"✅ BD conectada: {URL_BBDD}")
+
+    # --- AQUÍ CREAMOS LA MEMORIA CACHÉ DEL ESQUEMA ---
+    esquema_bd_cache = db.get_table_info()
+    log.info("⚡ Esquema de base de datos cargado en memoria rápida.")
+
 except Exception as e:
     log.error(f"❌ Error conectando a BD: {e}")
     db = None
+    esquema_bd_cache = "Esquema no disponible."
 
 
 @tool
@@ -244,7 +250,6 @@ def enviar_alerta_gmail(asunto: str, mensaje_ia: str):
         log.error(f"✉️ ❌ Error al enviar correo: {e}")
         return False
 
-enviar_alerta_gmail("Prueba de IA", "El sistema de notificaciones está operativo.")
 
 # ════════════════════════════════════════════════════════════
 # D. ENDPOINTS
@@ -348,17 +353,24 @@ def chatear(peticion: PeticionChat):
         REGLAS MILITARES DE CLASIFICACIÓN:
         1. SALUDOS O CHARLA: Si el usuario dice "Hola" o charla normal, herramienta: "ninguna", parametro: "".
         2. TEORÍA Y MANUALES: Si pregunta conceptos o PDFs, herramienta: "buscar_en_documentos", parametro: la pregunta completa.
-        3. DATOS REALES: Si pregunta por exámenes, usuarios o notas, herramienta: "consultar_base_datos".
+        3. DATOS REALES Y ANALÍTICA: Si pregunta por exámenes, usuarios, notas, promedios o mejores alumnos, herramienta: "consultar_base_datos".
+        4. ESTRUCTURA DE LA BD: Si pregunta "¿Qué tablas tiene la base de datos?" o sobre la estructura, herramienta: "ver_tablas", parametro: "".
         
         !!! MUY IMPORTANTE PARA DATOS REALES !!!
-        Si usas "consultar_base_datos", debes escribir el SQL exacto basándote ÚNICAMENTE en este esquema real de la base de datos:
-        {esquema_bd}
+        Si usas "consultar_base_datos", debes escribir el SQL exacto basándote ÚNICAMENTE en este esquema real:
+        {esquema_bd_cache}
+        - Para buscar el "mejor" o "mayor", usa ORDER BY columna DESC LIMIT 1.
+        - Para promedios, usa funciones como AVG() y GROUP BY.
         
         EJEMPLOS DE ENRUTAMIENTO CORRECTO:
         - "Hola" -> herramienta: "ninguna", parametro: ""
         - "¿Cómo declaro una variable?" -> herramienta: "buscar_en_documentos", parametro: "¿Cómo declaro una variable?"
-        - "¿Cuál es el título del examen 9?" -> herramienta: "consultar_base_datos", parametro: "SELECT nombre_columna FROM nombre_tabla_real WHERE id=9;"
+        - "¿Cuál es el título del examen 9?" -> herramienta: "consultar_base_datos", parametro: "SELECT titulo FROM examenes WHERE id=9;"
+        - "¿Qué tablas tiene la base de datos?" -> herramienta: "ver_tablas", parametro: ""
+        - "¿Qué alumno tiene mejor rendimiento?" -> herramienta: "consultar_base_datos", parametro: "SELECT correo_usuario, AVG(nota) FROM evaluaciones GROUP BY correo_usuario ORDER BY AVG(nota) DESC LIMIT 1;"
+        - "¿Cuántos alumnos han realizado algún examen?" -> herramienta: "consultar_base_datos", parametro: "SELECT COUNT(DISTINCT correo_usuario)  from examenes.evaluaciones;"
         """
+
 
         try:
             decision = enrutador.invoke(prompt_decision)
