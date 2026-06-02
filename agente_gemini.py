@@ -41,7 +41,7 @@ from datetime import datetime
 # ════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN
 # ════════════════════════════════════════════════════════════
-GEMINI_API_KEY  = "AIzaSyBCuAesU-c9qJu3ruf2FHqM-adWxUB7pOw"
+GEMINI_API_KEY  = os.environ.get("GOOGLE_API_KEY")
 GEMINI_MODEL    = "gemini-3.1-pro-preview"   # flash = rápido y barato; pro = más potente
 GEMINI_URL      = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"

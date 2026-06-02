@@ -6,3 +6,5 @@ documentos/*
 
 # Excepción: NO ignorar el archivo .gitkeep (necesario para mantener la carpeta)
 !documentos/.gitkeep
+
+.env
