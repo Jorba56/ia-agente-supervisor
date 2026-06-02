@@ -6,6 +6,10 @@ from sqlalchemy import text
 import os
 import logging
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from fastapi import Request
 from langgraph.prebuilt import create_react_agent
 from langchain_ollama import ChatOllama, OllamaEmbeddings # <-- ¡Ahora importamos OllamaEmbeddings!
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -209,6 +213,40 @@ log.info(f"✅ Agentes Locales Creados: Worker({MODELO_WORKER}) | Supervisor({MO
 herramientas = [ver_tablas, ver_esquema, consultar_base_datos, buscar_en_documentos]
 
 # ════════════════════════════════════════════════════════════
+# D. CONFIGURACION DE EMAILS
+# ════════════════════════════════════════════════════════════
+
+def enviar_alerta_gmail(asunto: str, mensaje_ia: str):
+    """Función proactiva para que el agente te envíe notificaciones por correo."""
+    remitente = os.environ.get("GMAIL_USER")
+    password = os.environ.get("GMAIL_PASS")
+    destinatario = remitente  # Te lo envía a ti mismo
+
+    if not remitente or not password:
+        log.error("⚠️ Faltan credenciales GMAIL_USER o GMAIL_PASS en el .env")
+        return False
+
+    msg = MIMEMultipart()
+    msg['From'] = f"🤖 Agente IA (Local) <{remitente}>"
+    msg['To'] = destinatario
+    msg['Subject'] = asunto
+    msg.attach(MIMEText(mensaje_ia, 'plain', 'utf-8'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(remitente, password)
+        server.send_message(msg)
+        server.quit()
+        log.info(f"✉️ ✅ Correo enviado con éxito: {asunto}")
+        return True
+    except Exception as e:
+        log.error(f"✉️ ❌ Error al enviar correo: {e}")
+        return False
+
+enviar_alerta_gmail("Prueba de IA", "El sistema de notificaciones está operativo.")
+
+# ════════════════════════════════════════════════════════════
 # D. ENDPOINTS
 # ════════════════════════════════════════════════════════════
 def obtener_memoria(session_id: str):
@@ -232,6 +270,54 @@ def guardar_respuesta_validada(pregunta: str, respuesta_final: str):
     except Exception as e:
         log.error(f"Error guardando conocimiento: {e}")
 
+
+@app.post("/github-webhook")
+async def webhook_github(request: Request):
+    """Escucha commits de GitHub y dispara la auditoría proactiva."""
+    try:
+        payload = await request.json()
+
+        # Ignoramos si no es un evento de subida de código (push)
+        if "commits" not in payload:
+            return {"status": "ignored", "reason": "No es un push"}
+
+        repo_name = payload["repository"]["name"]
+
+        # Extraemos qué archivos has tocado
+        archivos_cambiados = []
+        for commit in payload["commits"]:
+            archivos_cambiados.extend(commit.get("added", []))
+            archivos_cambiados.extend(commit.get("modified", []))
+
+        if not archivos_cambiados:
+            return {"status": "ok", "message": "Sin archivos para auditar."}
+
+        log.info(f"🔍 Webhook activado. El agente va a auditar: {archivos_cambiados}")
+
+        # 1. Le pedimos a Mistral que audite el primer archivo cambiado
+        archivo_objetivo = archivos_cambiados[0]
+        prompt_auditoria = f"""
+        Eres un auditor de código senior. Se acaba de modificar el archivo: '{archivo_objetivo}' 
+        en el repositorio '{repo_name}'.
+        
+        Redacta un informe de 3 puntos sobre qué vulnerabilidades de seguridad, 
+        fallos de rendimiento o malas prácticas buscarías específicamente 
+        al revisar un archivo con ese nombre y extensión. Sé directo y técnico.
+        """
+
+        # El Worker (Mistral) procesa la información
+        respuesta_ia = llm_worker.invoke(prompt_auditoria).content
+
+        # 2. El agente te envía el correo automáticamente
+        asunto_correo = f"🚨 Auditoría de IA: {archivo_objetivo} modificado"
+        enviar_alerta_gmail(asunto_correo, respuesta_ia)
+
+        return {"status": "ok", "archivos_auditados": archivos_cambiados}
+
+    except Exception as e:
+        log.error(f"Error en webhook: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.post("/chat")
 def chatear(peticion: PeticionChat):
     try:
@@ -243,21 +329,35 @@ def chatear(peticion: PeticionChat):
         # ---------------------------------------------------------
         # PASO 1: Ollama Router decide con Pydantic (Sin Regex!)
         # ---------------------------------------------------------
+        # ---------------------------------------------------------
+        # PASO 1: Ollama Router decide con Pydantic (Sin Regex!)
+        # ---------------------------------------------------------
+
+        # Extraemos el esquema real de la BD en texto plano para que el router no trabaje a ciegas
+        esquema_bd = ""
+        if db is not None:
+            try:
+                esquema_bd = db.get_table_info()
+            except Exception as e:
+                esquema_bd = f"Error obteniendo esquema: {e}"
+
         prompt_decision = f"""
         Eres un router inteligente. Tu única misión es clasificar la intención de esta petición:
         Petición: "{peticion.mensaje}"
 
         REGLAS MILITARES DE CLASIFICACIÓN:
-        1. SALUDOS O CHARLA: Si el usuario dice "Hola", "¿Estás ahí?", o hace preguntas conversacionales sin pedir datos técnicos, la herramienta DEBE SER "ninguna" y el parámetro vacío.
-        2. TEORÍA Y MANUALES: Si pregunta por cómo funciona algo, reglas, código o PDFs, usa "buscar_en_documentos" y pasa la pregunta completa como parámetro.
-        3. DATOS REALES: Si pide contar registros, ver notas, usuarios o estadísticas, usa "consultar_base_datos".
-        4. EXPLORACIÓN: Si pregunta "¿Qué tablas hay?", usa "ver_tablas".
-
+        1. SALUDOS O CHARLA: Si el usuario dice "Hola" o charla normal, herramienta: "ninguna", parametro: "".
+        2. TEORÍA Y MANUALES: Si pregunta conceptos o PDFs, herramienta: "buscar_en_documentos", parametro: la pregunta completa.
+        3. DATOS REALES: Si pregunta por exámenes, usuarios o notas, herramienta: "consultar_base_datos".
+        
+        !!! MUY IMPORTANTE PARA DATOS REALES !!!
+        Si usas "consultar_base_datos", debes escribir el SQL exacto basándote ÚNICAMENTE en este esquema real de la base de datos:
+        {esquema_bd}
+        
         EJEMPLOS DE ENRUTAMIENTO CORRECTO:
-        - "Hola, ¿estás listo para operar?" -> herramienta: "ninguna", parametro: ""
-        - "Buenos días" -> herramienta: "ninguna", parametro: ""
+        - "Hola" -> herramienta: "ninguna", parametro: ""
         - "¿Cómo declaro una variable?" -> herramienta: "buscar_en_documentos", parametro: "¿Cómo declaro una variable?"
-        - "¿Cuántas partidas hay?" -> herramienta: "consultar_base_datos", parametro: "SELECT COUNT(*) FROM partidas;"
+        - "¿Cuál es el título del examen 9?" -> herramienta: "consultar_base_datos", parametro: "SELECT nombre_columna FROM nombre_tabla_real WHERE id=9;"
         """
 
         try:
@@ -268,6 +368,7 @@ def chatear(peticion: PeticionChat):
             log.warning(f"Error en estructuración del router: {e}")
             herramienta_elegida = "ninguna"
             parametro = ""
+
 
         log.info(f"[ROUTER OLLAMA] Herramienta: {herramienta_elegida} | Param: {parametro[:100]}")
 
