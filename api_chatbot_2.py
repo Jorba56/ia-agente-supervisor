@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 import os
 import logging
-
+import time
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -265,13 +265,27 @@ def leer_interfaz():
     except FileNotFoundError:
         return HTMLResponse("<h1>index.html no encontrado</h1>", status_code=404)
 
-def guardar_respuesta_validada(pregunta: str, respuesta_final: str):
+def guardar_respuesta_validada(pregunta: str, respuesta: str, latencia: float, t_in: int, t_out: int, vel: float):
     if db is None: return
     try:
-        query = text("INSERT INTO conocimiento_validado (pregunta, respuesta) VALUES (:p, :r)")
+        query = text("""
+                     INSERT INTO conocimiento_validado
+                     (pregunta, respuesta, latencia_segundos, tokens_entrada, tokens_salida, tokens_por_segundo)
+                     VALUES (:pregunta, :respuesta, :latencia, :t_in, :t_out, :vel)
+                     """)
+
         with db._engine.connect() as conn:
-            conn.execute(query, {"p": pregunta, "r": respuesta_final})
+            # Los nombres de las claves deben coincidir EXACTAMENTE con los :nombres del VALUES
+            conn.execute(query, {
+                "pregunta": pregunta,
+                "respuesta": respuesta,
+                "latencia": latencia,
+                "t_in": t_in,
+                "t_out": t_out,
+                "vel": vel
+            })
             conn.commit()
+
     except Exception as e:
         log.error(f"Error guardando conocimiento: {e}")
 
@@ -325,6 +339,9 @@ async def webhook_github(request: Request):
 
 @app.post("/chat")
 def chatear(peticion: PeticionChat):
+    # 1. Arrancamos el cronómetro de forma segura antes de cualquier otra cosa
+    tiempo_inicio = time.time()
+
     try:
         if not peticion.mensaje.strip(): return {"status": "error", "respuesta": "Mensaje vacío."}
 
@@ -334,18 +351,8 @@ def chatear(peticion: PeticionChat):
         # ---------------------------------------------------------
         # PASO 1: Ollama Router decide con Pydantic (Sin Regex!)
         # ---------------------------------------------------------
-        # ---------------------------------------------------------
-        # PASO 1: Ollama Router decide con Pydantic (Sin Regex!)
-        # ---------------------------------------------------------
 
-        # Extraemos el esquema real de la BD en texto plano para que el router no trabaje a ciegas
-        esquema_bd = ""
-        if db is not None:
-            try:
-                esquema_bd = db.get_table_info()
-            except Exception as e:
-                esquema_bd = f"Error obteniendo esquema: {e}"
-
+        # Usamos directamente {esquema_bd_cache} en el prompt, sin hacer llamadas a la BD aquí
         prompt_decision = f"""
         Eres un router inteligente. Tu única misión es clasificar la intención de esta petición:
         Petición: "{peticion.mensaje}"
@@ -370,7 +377,6 @@ def chatear(peticion: PeticionChat):
         - "¿Qué alumno tiene mejor rendimiento?" -> herramienta: "consultar_base_datos", parametro: "SELECT correo_usuario, AVG(nota) FROM evaluaciones GROUP BY correo_usuario ORDER BY AVG(nota) DESC LIMIT 1;"
         - "¿Cuántos alumnos han realizado algún examen?" -> herramienta: "consultar_base_datos", parametro: "SELECT COUNT(DISTINCT correo_usuario)  from examenes.evaluaciones;"
         """
-
 
         try:
             decision = enrutador.invoke(prompt_decision)
@@ -412,7 +418,15 @@ def chatear(peticion: PeticionChat):
         
         Responde SOLO usando la fuente de verdad. No muestres JSON, ni tu proceso interno.
         """
-        respuesta_borrador = llm_worker.invoke(prompt_respuesta).content
+
+        # 2. Corregido: Llamamos al LLM solo una vez
+        respuesta_bruta = llm_worker.invoke(prompt_respuesta)
+        respuesta_borrador = respuesta_bruta.content
+
+        # Extraemos los tokens de los metadatos que escupe Ollama
+        metadatos = respuesta_bruta.response_metadata
+        tokens_entrada = metadatos.get('prompt_eval_count', 0)
+        tokens_salida = metadatos.get('eval_count', 0)
 
         # ---------------------------------------------------------
         # PASO 4: Ollama Supervisor audita usando Pydantic
@@ -442,7 +456,27 @@ def chatear(peticion: PeticionChat):
         # Guardado en BBDD
         memoria.add_user_message(peticion.mensaje)
         memoria.add_ai_message(respuesta_final)
-        guardar_respuesta_validada(peticion.mensaje, respuesta_final)
+
+        # 3. Calculamos tiempos finales
+        tiempo_fin = time.time()
+        latencia_total = round(tiempo_fin - tiempo_inicio, 2)
+        velocidad_generacion = round(tokens_salida / latencia_total, 1) if latencia_total > 0 else 0
+
+        # Imprimimos el cuadro de mandos en la consola
+        log.info(f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+        log.info(f"┃ TIEMPO TOTAL: {latencia_total} s")
+        log.info(f"┃ TOKENS WORKER: In: {tokens_entrada} | Out: {tokens_salida}")
+        log.info(f"┃ VELOCIDAD: {velocidad_generacion} tokens/segundo")
+        log.info(f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+
+        guardar_respuesta_validada(
+            pregunta=peticion.mensaje,
+            respuesta=respuesta_final,
+            latencia=latencia_total,
+            t_in=tokens_entrada,
+            t_out=tokens_salida,
+            vel=velocidad_generacion
+        )
 
         return {
             "status": "ok",
