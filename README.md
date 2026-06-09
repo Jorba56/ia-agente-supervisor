@@ -1,119 +1,317 @@
-# Sistema de Asistencia IA Híbrido (Multi-Agente)
+# 🤖 Sistema de Asistencia IA Híbrido (Multi-Agente) — v4.0
 
-Este directorio contiene el ecosistema de Inteligencia Artificial desarrollado para el proyecto. Implementa una arquitectura avanzada de **Enrutador Inteligente** y **Supervisor** (patrón *Actor-Crítico* / *Router-Worker*), combinando la privacidad y rapidez de la ejecución local (Ollama) con la capacidad de razonamiento estructurado en la nube (Google Gemini).
+Ecosistema de Inteligencia Artificial con arquitectura **100% local y privada**, basado en el patrón **Router → Worker → Supervisor**. Todos los modelos de lenguaje corren en Ollama (Railway o local), eliminando la dependencia de APIs externas para el procesamiento de datos sensibles.
 
-El sistema es capaz de auditar código, analizar PDFs de documentación técnica mediante RAG (Retrieval-Augmented Generation) e interactuar directamente con la base de datos MySQL para extraer métricas y datos reales en tiempo real.
+---
 
-##  Estructura del Directorio
+## 📁 Estructura del Directorio
 
-* **`api_chatbot.py`**: El núcleo RESTful (FastAPI). Orquesta el sistema Multi-Agente, la conexión a la base de datos MySQL, el motor RAG y el enrutamiento inteligente de consultas.
-* **`agente_gemini.py`**: Herramienta CLI auxiliar orientada a la lectura, indexación, refactorización y análisis profundo de código fuente.
-* **`documentos/`**: Directorio de ingesta de datos. Los PDFs depositados aquí (manuales, memorias de diseño) son vectorizados automáticamente mediante FAISS para dotar al agente de contexto técnico.
-* **`index.html`**: Interfaz web (Frontend) lista para ser servida por la API, proporcionando una experiencia de chat amigable para el usuario final.
-* **`*_docs.md`**: Documentación técnica extendida para los scripts individuales.
-
-## Arquitectura del Sistema
-
-1.  **Router (Gemini)**: Analiza la intención del usuario y decide qué herramienta debe ejecutarse (Base de datos, lectura de PDFs, o ninguna).
-2.  **Tools (FAISS / MySQL)**: Ejecutan la búsqueda semántica o la consulta SQL extrayendo los datos en bruto (*evidencia real*).
-3.  **Worker (Mistral/Llama)**: Modelo de ejecución local que lee la evidencia extraída y redacta una respuesta humana y natural de forma totalmente privada.
-4.  **Supervisor (Gemini)**: Audita la respuesta final del Worker comparándola con la evidencia real para eliminar alucinaciones antes de enviarla al cliente.
-
-##  Requisitos Previos
-
-* **Python:** Versión 3.10 o superior.
-* **Ollama:** Instalado y corriendo localmente en el puerto `11434`. Debe tener descargado el modelo objetivo (ej. `mistral` o `llama3.2`).
-* **Base de Datos:** Un servidor MySQL ejecutándose con la base de datos del proyecto (`examenes`).
-
-*Nota de rendimiento: El procesamiento local del agente worker (Ollama) aprovechará automáticamente la aceleración de hardware disponible en el equipo, lo que garantiza una generación de texto fluida y una latencia mínima al no depender de colas en la nube para la redacción final.*
-
-##  Instalación y Configuración
-
-1. **Instalar dependencias de Python:**
-   Abre una terminal en este directorio e instala las librerías necesarias:
-   ```bash
-   pip install fastapi uvicorn sqlalchemy pymysql langchain langchain-google-genai langchain-ollama langchain-community pydantic faiss-cpu pypdf
-## Configuración del Entorno (Variables)
-
-Asegúrate de que las credenciales en `api_chatbot.py` (sección de configuración) o en tus variables de entorno del sistema coinciden con tu entorno local:
-
-- **`GOOGLE_API_KEY`**: Tu clave de API de Google AI Studio.
-- **`DATABASE_URL`**: Cadena de conexión a MySQL (ej. `mysql+pymysql://root:12345@localhost:3306/examenes`).
-
-## Carga de Modelos Locales
-
-Asegúrate de tener el modelo local descargado en tu equipo. Abre una terminal y ejecuta:
-
-```bash
-ollama pull mistral
+```
+ia-proyecto/
+├── api_chatbot.py          # Servidor principal FastAPI (v4.0 — 100% Ollama)
+├── agente_gemini.py        # Herramienta CLI para análisis de código Java
+├── agente_creador.py       # Agente autónomo creador de proyectos (LangGraph)
+├── index.html              # Interfaz web del chatbot
+├── documentos/             # PDFs para el sistema RAG (se vectorizan automáticamente)
+├── .env                    # Variables de entorno (no subir a Git)
+└── proyectos_generados/    # Carpeta de salida del agente_creador.py
 ```
 
-# ▶️ Ejecución del Proyecto
+---
 
-Para desplegar el agente y comenzar a utilizar el sistema, sigue estos pasos:
+## 🏗️ Arquitectura del Sistema
 
-## Paso 1: Iniciar el motor local de IA
+### `api_chatbot.py` — El Chatbot (Flujo de una petición)
 
-Asegúrate de que Ollama está en ejecución en segundo plano. Si no se inicia automáticamente con tu sistema, abre una terminal y ejecuta:
-
-```bash
-ollama serve
+```
+Usuario
+  │
+  ▼
+FastAPI /chat
+  │
+  ├─► [PASO 1] Qwen2.5:7b (Router)
+  │     └── Analiza la intención y elige herramienta + SQL
+  │
+  ├─► [PASO 2] Herramienta ejecutada en Python
+  │     ├── buscar_en_documentos → FAISS (RAG local con nomic-embed-text)
+  │     ├── consultar_base_datos → MySQL
+  │     └── ver_tablas          → MySQL
+  │
+  ├─► [PASO 3] Mistral (Worker)
+  │     └── Redacta respuesta natural con la evidencia obtenida
+  │
+  ├─► [PASO 4] Qwen2.5:7b (Supervisor)
+  │     └── Valida que la respuesta no tenga JSON ni alucinaciones
+  │
+  └─► Respuesta final al usuario + guardado en MySQL
 ```
 
-## Paso 2: Iniciar el Servidor API
+### `agente_creador.py` — El Creador de Proyectos (LangGraph)
 
-Abre una nueva terminal en el directorio `ia-proyecto` y levanta el servidor de FastAPI mediante Uvicorn:
+```
+Input: descripción en lenguaje natural
+  │
+  ▼
+[Nodo 1] Arquitecto (Gemini / configurable)
+  └── Genera plan JSON: lista de archivos con descripción técnica
+  │
+  ▼
+[Nodo 2] Programador (Ollama / configurable)
+  └── Para cada archivo: genera código y llama a crear_archivo()
+  │
+  ▼
+Output: archivos creados en ./proyectos_generados/
+```
+
+---
+
+## ⚙️ Modelos utilizados
+
+| Rol | Modelo                   | Dónde corre | Para qué |
+|-----|--------------------------|-------------|----------|
+| **Worker** | `mistral`                | Ollama (Railway) | Redacta respuestas en lenguaje natural |
+| **Router / Supervisor** | `qwen2.5:7b`             | Ollama (Railway) | Toma decisiones estructuradas (JSON) |
+| **Embeddings RAG** | `nomic-embed-text`       | Ollama (Railway) | Vectoriza los PDFs localmente |
+| **Arquitecto** (agente_creador) | `gemini-3.1-pro-preview` | Google API | Diseña la estructura del proyecto |
+| **Programador** (agente_creador) | `qwen3.5:4b`             | Ollama | Genera el código archivo por archivo |
+| **Análisis código** (agente_gemini) | `gemini-3.1-pro-preview` | Google API | Tests, docs, refactoring, seguridad |
+
+---
+
+## 🔌 Variables de Entorno (`.env`)
+
+Crea un archivo `.env` en el directorio `ia-proyecto/` con:
+
+```env
+# Base de datos MySQL
+DATABASE_URL=mysql+pymysql://root:12345@localhost:3306/examenes
+
+# Google Gemini (para agente_gemini.py y agente_creador.py)
+GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
+
+# Alertas por correo (opcional — para el webhook de GitHub)
+GMAIL_USER=tu_correo@gmail.com
+GMAIL_PASS=tu_app_password_de_gmail
+
+# Carpeta de PDFs (opcional, por defecto: "documentos")
+PDF_DIR=documentos
+```
+
+> ⚠️ **Nunca subas `.env` a Git.** Añádelo al `.gitignore`.
+
+---
+
+## 🗃️ Esquema de base de datos requerido
+
+El sistema necesita estas tablas en MySQL además de las tablas del proyecto:
+
+```sql
+-- Historial de conversaciones (se crea automáticamente)
+-- Tabla: message_store (creada por SQLChatMessageHistory)
+
+-- Memoria a largo plazo del agente (debes crearla manualmente)
+CREATE TABLE IF NOT EXISTS conocimiento_validado (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    pregunta            TEXT NOT NULL,
+    respuesta           TEXT NOT NULL,
+    latencia_segundos   FLOAT,
+    tokens_entrada      INT,
+    tokens_salida       INT,
+    tokens_por_segundo  FLOAT,
+    fecha               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+## 📦 Instalación
+
+```bash
+# Crear entorno virtual
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate      # Linux/Mac
+
+# Instalar dependencias
+pip install fastapi uvicorn sqlalchemy pymysql python-dotenv \
+    langchain langchain-google-genai langchain-ollama \
+    langchain-community langchain-anthropic langchain-text-splitters \
+    langgraph pydantic faiss-cpu pypdf
+```
+
+---
+
+## ▶️ Ejecución
+
+### Chatbot (`api_chatbot.py`)
 
 ```bash
 uvicorn api_chatbot:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## Paso 3: Acceder a la Interfaz
+Accede en: `http://localhost:8000`
 
-Una vez que en la terminal veas el mensaje de **Application startup complete** y **RAG cargado**, abre tu navegador web y visita:
+### Agente creador de proyectos (`agente_creador.py`)
 
-```text
-http://localhost:8000
+```bash
+py agente_creador.py
 ```
 
-# 🔄 Mantenimiento y Operaciones Comunes
+Te pedirá una descripción y generará los archivos en `./proyectos_generados/`.
 
-## Actualizar documentación (PDFs)
+### Agente de análisis de código (`agente_gemini.py`)
 
-Si añades nuevos PDFs a la carpeta `documentos/`, no es necesario reiniciar el servidor por completo. Puedes invocar una recarga del índice vectorial haciendo una petición POST:
+```bash
+# Generar tests unitarios para una clase
+py agente_gemini.py --modo tests --clase EvaluacionServiceImpl --microservicio examenes-service
+
+# Analizar bugs y problemas SOLID
+py agente_gemini.py --modo analisis --clase ExamenController --microservicio examenes-service
+
+# Auditoría de seguridad
+py agente_gemini.py --modo seguridad --clase SecurityConfig --microservicio examenes-service
+
+# Refactoring automático
+py agente_gemini.py --modo refactor --clase ReporteServiceImpl --microservicio examenes-service
+
+# Generar documentación Markdown
+py agente_gemini.py --modo docs --todo --microservicio examenes-service
+
+# Generar README.md del proyecto
+py agente_gemini.py --modo readme --microservicio examenes-service
+
+# Generar Dockerfile y docker-compose optimizados
+py agente_gemini.py --modo dockerfile
+
+# Generar script SQL (migraciones, datos de prueba)
+py agente_gemini.py --modo sql --descripcion "Genera datos de prueba para evaluaciones"
+
+# Generar frontend JS/HTML
+py agente_gemini.py --modo frontend --descripcion "Formulario para crear exámenes"
+
+# Modo chat libre con contexto del proyecto completo
+py agente_gemini.py --modo chat --microservicio examenes-service
+```
+
+---
+
+## 🌐 Endpoints de la API
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/` | Sirve la interfaz web (`index.html`) |
+| `POST` | `/chat` | Envía un mensaje al agente |
+| `GET` | `/historial/{session_id}` | Recupera el historial de una sesión |
+| `GET` | `/chats` | Lista todos los IDs de sesión |
+| `GET` | `/estado` | Health check: modelos, BD y RAG |
+| `POST` | `/recargar-pdfs` | Recarga los PDFs sin reiniciar |
+| `POST` | `/github-webhook` | Webhook para auditorías automáticas en cada commit |
+
+### Ejemplo de petición al chat
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "mi_sesion_1", "mensaje": "¿Cuál es la nota media de los alumnos?"}'
+```
+
+### Respuesta
+
+```json
+{
+  "status": "ok",
+  "respuesta": "La nota media de los alumnos es 6.8 sobre 10.",
+  "corregida_por_supervisor": false
+}
+```
+
+---
+
+## 🔔 Webhook de GitHub (Auditoría proactiva)
+
+El endpoint `/github-webhook` escucha eventos `push` de GitHub. Cuando detecta un commit:
+
+1. Identifica los archivos modificados
+2. Mistral genera un informe de auditoría de seguridad y buenas prácticas
+3. El agente te envía el informe automáticamente por **Gmail**
+
+### Configurar en GitHub
+
+Ve a tu repositorio → `Settings` → `Webhooks` → `Add webhook`:
+
+- **Payload URL:** `https://tu-dominio/github-webhook`
+- **Content type:** `application/json`
+- **Events:** `Just the push event`
+
+### Configurar Gmail
+
+1. Activa la verificación en dos pasos en tu cuenta Google
+2. Ve a `Cuenta de Google` → `Seguridad` → `Contraseñas de aplicación`
+3. Genera una contraseña para "Mail" y ponla en `GMAIL_PASS` del `.env`
+
+---
+
+## 📊 Métricas de rendimiento
+
+Cada respuesta registra automáticamente en `conocimiento_validado`:
+
+- **Latencia total** (segundos)
+- **Tokens de entrada** (prompt enviado a Mistral)
+- **Tokens de salida** (respuesta generada)
+- **Velocidad** (tokens/segundo)
+
+Se imprimen en consola con este formato:
+
+```
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ TIEMPO TOTAL: 3.42 s
+┃ TOKENS WORKER: In: 512 | Out: 148
+┃ VELOCIDAD: 43.3 tokens/segundo
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+---
+
+## 📄 Gestión de PDFs (RAG)
+
+Coloca cualquier PDF en la carpeta `documentos/`. Al arrancar el servidor se vectorizan automáticamente usando `nomic-embed-text` (Ollama). Para recargar sin reiniciar:
 
 ```bash
 curl -X POST http://localhost:8000/recargar-pdfs
 ```
 
-## Modificar el modelo local
+---
 
-Si decides cambiar el modelo de redacción (por ejemplo, de Mistral a Llama 3.2), solo necesitas actualizar la variable `model="mistral"` en la inicialización de `ChatOllama` dentro de `api_chatbot.py`.
+## ☁️ Despliegue de Ollama en Railway
 
-## ☁️ Alternativa: Despliegue del Motor IA en Railway (Ollama en la Nube)
+1. Nuevo proyecto → `Deploy from Docker image` → imagen: `ollama/ollama`
+2. **Volumes:** monta `/root/.ollama` para persistir los modelos
+3. **Networking:** genera dominio público en puerto `11434`
+4. Descarga los modelos desde la consola de Railway:
 
-Durante el desarrollo del proyecto, se validó una arquitectura donde el "Worker" (Ollama) no se ejecuta en la máquina local, sino que se aloja como un microservicio independiente en la nube utilizando **Railway**. Esto es ideal si se desea ejecutar la API en equipos con recursos limitados.
+```bash
+ollama pull mistral
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+```
 
-A continuación, se detallan los pasos para replicar este despliegue:
+5. Actualiza `URL_OLLAMA` en `api_chatbot.py` con tu URL de Railway
 
-### 1. Creación del Servicio en Railway
-1. Inicia sesión en [Railway.app](https://railway.app/) y crea un nuevo proyecto (`New Project`).
-2. Selecciona **Deploy from Docker image** (Desplegar desde imagen Docker).
-3. Escribe `ollama/ollama` como nombre de la imagen. Railway provisionará un contenedor con el motor base de Ollama.
+---
 
-### 2. Configuración de Almacenamiento (Volúmenes)
-Para evitar que el modelo de IA (que pesa varios Gigabytes) se descargue cada vez que el servidor se reinicie, es obligatorio configurar persistencia de datos:
-1. Ve a la pestaña **Volumes** dentro de tu nuevo servicio en Railway.
-2. Crea un nuevo volumen y móntalo en la ruta interna: `/root/.ollama`.
+## 🔧 Cambiar modelos
 
-### 3. Exposición a Internet (Networking)
-1. Ve a la pestaña **Settings** (Configuración) del servicio.
-2. En la sección **Networking**, haz clic en *Generate Domain*. Esto te dará una URL pública (por ejemplo: `https://ollama-production-xxxx.up.railway.app`).
-3. Asegúrate de que el puerto interno expuesto sea el `11434` (el puerto por defecto de la API de Ollama).
+Todo se controla con tres variables en `api_chatbot.py`:
 
-### 4. Descarga del Modelo (Pull)
-Una vez que el contenedor está corriendo, necesitas descargar el modelo (ej. Mistral o Llama 3.2) dentro de ese servidor:
-1. En el dashboard de Railway, ve a tu servicio y abre la consola integrada o ejecuta un comando remoto.
-2. Ejecuta el comando de descarga:
-   ```bash
-   ollama pull mistral
+```python
+MODELO_WORKER     = "mistral"         # El que redacta
+MODELO_SUPERVISOR = "qwen2.5:7b"      # El que decide y valida
+MODELO_EMBED      = "nomic-embed-text" # El que vectoriza PDFs
+```
+
+Y en `agente_creador.py`:
+
+```python
+arquitecto_llm  = obtener_modelo("gemini", "gemini-3.1-pro-preview")
+programador_llm = obtener_modelo("local",  "qwen3.5:4b")
+```

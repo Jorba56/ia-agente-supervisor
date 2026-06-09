@@ -18,7 +18,8 @@ from sqlalchemy import create_engine, MetaData, select
 from langchain_core.tools import tool
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+# Importamos la integración nativa de Turbovec para LangChain
+from turbovec.langchain import TurboQuantVectorStore
 from langchain_community.utilities import SQLDatabase
 from dotenv import load_dotenv
 
@@ -33,7 +34,7 @@ load_dotenv()
 URL_BBDD       = os.environ.get("DATABASE_URL")
 CARPETA_PDFS   = os.environ.get("PDF_DIR", "documentos")
 
-# URL de tu Ollama en Railway
+# URL de Ollama en Railway
 URL_OLLAMA     = "https://ollama-production-c952.up.railway.app"
 
 # Modelos Locales
@@ -156,11 +157,14 @@ def cargar_pdfs() -> None:
         # Utilizamos OllamaEmbeddings en lugar de Google
         embeddings = OllamaEmbeddings(model=MODELO_EMBED, base_url=URL_OLLAMA)
 
-        primer_split = splits[0]
-        vectorstore = FAISS.from_texts([primer_split.page_content], embeddings, metadatas=[primer_split.metadata])
-        for split in splits[1:]:
-            vectorstore.add_texts([split.page_content], metadatas=[split.metadata])
-
+        # INYECCIÓN DE TURBOVEC (Motor Rust)
+        # from_documents procesa todos los splits de golpe de forma optimizada
+        vectorstore = TurboQuantVectorStore.from_documents(
+            documents=splits,
+            embedding=embeddings,
+            # Aquí podrías añadir parámetros de compresión de 2-bit o 4-bit
+            # si el portátil sufre mucho, gracias a la tecnología de Turbovec
+        )
         _retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
         log.info(f"✅ RAG Privado cargado: {len(docs)} PDFs → {len(splits)} fragmentos")
     except Exception as e:
