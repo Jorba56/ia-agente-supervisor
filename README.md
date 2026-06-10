@@ -1,27 +1,64 @@
-# 🤖 Sistema de Asistencia IA Híbrido (Multi-Agente) — v4.0
+# 🤖 Ecosistema de Inteligencia Artificial — Documentación Conjunta
 
-Ecosistema de Inteligencia Artificial con arquitectura **100% local y privada**, basado en el patrón **Router → Worker → Supervisor**. Todos los modelos de lenguaje corren en Ollama (Railway o local), eliminando la dependencia de APIs externas para el procesamiento de datos sensibles.
+> **Proyecto conjunto:** Jorge Barriga Rubio · Pablo Pacheco  
+> **Última actualización:** Junio 2026
+
+Este documento describe los dos sistemas de IA desarrollados de forma independiente para el proyecto **ExamenApp**, comparando sus enfoques, arquitecturas y decisiones técnicas.
 
 ---
 
-## 📁 Estructura del Directorio
+## 👥 Resumen comparativo
 
+| | **Jorge** (`ia-proyecto/`)      | **Pablo** (`ms-chatbot/`) |
+|---|---------------------------------|---|
+| **Nombre** | Sistema Multi-Agente v4.0       | ms-chatbot |
+| **Framework** | FastAPI + LangChain + LangGraph | FastAPI + LangChain + LangGraph |
+| **LLMs** | Ollama (Railway) — 100% local   | Groq (nube) + Ollama (local, dev) |
+| **Router** | Qwen2.5:7b con Pydantic         | Detección por palabras clave |
+| **Worker** | Mistral                         | llama-3.1-8b-instant (Groq) |
+| **Supervisor** | Qwen2.5:7b (síncrono)           | llama-3.1-8b-instant (asíncrono) |
+| **Embeddings RAG** | `nomic-embed-text` (Ollama)     | `nomic-embed-text` (Ollama) |
+| **Vector store** | Turbovec                           | Turbovec |
+| **BD relacional** | MySQL (`examenes`)              | MySQL (múltiples schemas) |
+| **BD de grafos** | ❌ No implementado               | ✅ Neo4j (Knowledge Graph) |
+| **OCR** | ❌ No implementado               | ✅ Tesseract |
+| **Webhook GitHub** | ✅ Auditoría por email           | ❌ No implementado |
+| **Métricas** | Tokens, latencia, vel. (MySQL)  | Telemetría en BD separada |
+| **Agente creador** | ✅ `agente_creador.py`           | ❌ No implementado |
+| **CLI análisis código** | ✅ `agente_gemini.py`            | ❌ No implementado |
+| **Despliegue** | Ollama en Railway               | Docker Compose completo |
+
+---
+
+## 📁 Estructura de directorios
+
+### Jorge — `ia-proyecto/`
 ```
 ia-proyecto/
-├── api_chatbot.py          # Servidor principal FastAPI (v4.0 — 100% Ollama)
-├── agente_gemini.py        # Herramienta CLI para análisis de código Java
-├── agente_creador.py       # Agente autónomo creador de proyectos (LangGraph)
+├── api_chatbot.py          # Servidor principal FastAPI v4.0
+├── agente_gemini.py        # CLI para análisis de código Java
+├── agente_creador.py       # Agente autónomo creador de proyectos
 ├── index.html              # Interfaz web del chatbot
-├── documentos/             # PDFs para el sistema RAG (se vectorizan automáticamente)
-├── .env                    # Variables de entorno (no subir a Git)
-└── proyectos_generados/    # Carpeta de salida del agente_creador.py
+├── documentos/             # PDFs vectorizados automáticamente
+├── .env                    # Variables de entorno
+└── proyectos_generados/    # Salida del agente_creador.py
+```
+
+### Pablo — `ms-chatbot/`
+```
+chatbot/
+├── api_chatbot.py          # Servidor principal FastAPI
+├── index.html              # Interfaz web del chatbot
+├── documentos/             # PDFs y archivos indexados
+├── requirements.txt        # Dependencias Python
+└── Dockerfile              # Imagen Docker del servicio
 ```
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 🏗️ Arquitectura del sistema
 
-### `api_chatbot.py` — El Chatbot (Flujo de una petición)
+### Jorge — Patrón Router → Worker → Supervisor (100% local)
 
 ```
 Usuario
@@ -29,88 +66,84 @@ Usuario
   ▼
 FastAPI /chat
   │
-  ├─► [PASO 1] Qwen2.5:7b (Router)
-  │     └── Analiza la intención y elige herramienta + SQL
+  ├─► [PASO 1] Qwen2.5:7b (Router — Pydantic structured output)
+  │     └── Analiza intención y genera SQL directamente
   │
-  ├─► [PASO 2] Herramienta ejecutada en Python
-  │     ├── buscar_en_documentos → FAISS (RAG local con nomic-embed-text)
+  ├─► [PASO 2] Herramienta Python (sin pasar por el LLM)
+  │     ├── buscar_en_documentos → Turbovec + nomic-embed-text
   │     ├── consultar_base_datos → MySQL
-  │     └── ver_tablas          → MySQL
+  │     └── ver_tablas           → MySQL
   │
-  ├─► [PASO 3] Mistral (Worker)
-  │     └── Redacta respuesta natural con la evidencia obtenida
+  ├─► [PASO 3] Mistral (Worker — redacta respuesta natural)
   │
-  ├─► [PASO 4] Qwen2.5:7b (Supervisor)
-  │     └── Valida que la respuesta no tenga JSON ni alucinaciones
+  ├─► [PASO 4] Qwen2.5:7b (Supervisor síncrono — valida antes de responder)
   │
-  └─► Respuesta final al usuario + guardado en MySQL
+  └─► Respuesta + métricas guardadas en MySQL
 ```
 
-### `agente_creador.py` — El Creador de Proyectos (LangGraph)
+### Pablo — Patrón Enrutador por palabras clave + Supervisor asíncrono
 
 ```
-Input: descripción en lenguaje natural
+Usuario
   │
   ▼
-[Nodo 1] Arquitecto (Gemini / configurable)
-  └── Genera plan JSON: lista de archivos con descripción técnica
+FastAPI /chat
   │
-  ▼
-[Nodo 2] Programador (Ollama / configurable)
-  └── Para cada archivo: genera código y llama a crear_archivo()
+  ├─► Análisis de contexto (archivos mencionados, palabras técnicas)
   │
-  ▼
-Output: archivos creados en ./proyectos_generados/
+  ├─► Rutas automáticas:
+  │     ├── RAG DOC     → Turbovec + búsqueda semántica
+  │     ├── CÓDIGO      → Análisis técnico Spring/Java
+  │     └── SQL/GRAFO   → Agente LangChain + Neo4j
+  │
+  ├─► LLM Principal (Groq llama-3.1-8b / Ollama llama3.2)
+  │     └── Respuesta al usuario (SÍNCRONO)
+  │
+  └─► LLM Supervisor (ASÍNCRONO — en background)
+        ├── Evalúa calidad: BUENA o MALA
+        ├── Detecta alucinaciones
+        └── Guarda en db_chatbot_telemetria
 ```
+
+**Diferencia clave:** En Jorge el supervisor bloquea la respuesta hasta validarla. En Pablo el supervisor trabaja en background y no ralentiza al usuario, pero la corrección llega tarde.
 
 ---
 
-## ⚙️ Modelos utilizados
+## 🧠 Modelos de IA utilizados
 
-| Rol | Modelo                   | Dónde corre | Para qué |
-|-----|--------------------------|-------------|----------|
-| **Worker** | `mistral`                | Ollama (Railway) | Redacta respuestas en lenguaje natural |
-| **Router / Supervisor** | `qwen2.5:7b`             | Ollama (Railway) | Toma decisiones estructuradas (JSON) |
-| **Embeddings RAG** | `nomic-embed-text`       | Ollama (Railway) | Vectoriza los PDFs localmente |
-| **Arquitecto** (agente_creador) | `gemini-3.1-pro-preview` | Google API | Diseña la estructura del proyecto |
-| **Programador** (agente_creador) | `qwen3.5:4b`             | Ollama | Genera el código archivo por archivo |
-| **Análisis código** (agente_gemini) | `gemini-3.1-pro-preview` | Google API | Tests, docs, refactoring, seguridad |
+### Jorge
 
----
+| Rol | Modelo | Dónde corre |
+|-----|--------|-------------|
+| Router + Supervisor | `qwen2.5:7b` | Ollama (Railway) |
+| Worker (redacta) | `mistral` | Ollama (Railway) |
+| Embeddings RAG | `nomic-embed-text` | Ollama (Railway) |
+| Arquitecto (agente_creador) | `gemini-1.5-flash` | Google API |
+| Análisis código (agente_gemini) | `gemini-1.5-flash` | Google API |
 
-## 🔌 Variables de Entorno (`.env`)
+### Pablo
 
-Crea un archivo `.env` en el directorio `ia-proyecto/` con:
-
-```env
-# Base de datos MySQL
-DATABASE_URL=mysql+pymysql://root:12345@localhost:3306/examenes
-
-# Google Gemini (para agente_gemini.py y agente_creador.py)
-GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
-
-# Alertas por correo (opcional — para el webhook de GitHub)
-GMAIL_USER=tu_correo@gmail.com
-GMAIL_PASS=tu_app_password_de_gmail
-
-# Carpeta de PDFs (opcional, por defecto: "documentos")
-PDF_DIR=documentos
-```
-
-> ⚠️ **Nunca subas `.env` a Git.** Añádelo al `.gitignore`.
+| Rol | Modelo producción | Modelo desarrollo |
+|-----|-------------------|-------------------|
+| Chat principal | `llama-3.1-8b-instant` (Groq) | `llama3.2` (Ollama local) |
+| Grafo Neo4j | `llama-3.1-8b-instant` (Groq) | `llama3.2:1b` (Ollama local) |
+| Supervisor telemetría | `llama-3.1-8b-instant` (Groq) | `llama3.2` (Ollama local) |
+| Embeddings RAG | `nomic-embed-text` | `nomic-embed-text` |
 
 ---
 
-## 🗃️ Esquema de base de datos requerido
+## 🗄️ Base de datos y persistencia
 
-El sistema necesita estas tablas en MySQL además de las tablas del proyecto:
+### Jorge
+
+**MySQL** — una sola base de datos `examenes`:
 
 ```sql
--- Historial de conversaciones (se crea automáticamente)
--- Tabla: message_store (creada por SQLChatMessageHistory)
+-- Historial de conversaciones (auto-creada por LangChain)
+message_store: session_id, message, created_at
 
--- Memoria a largo plazo del agente (debes crearla manualmente)
-CREATE TABLE IF NOT EXISTS conocimiento_validado (
+-- Memoria a largo plazo + métricas (crear manualmente)
+CREATE TABLE conocimiento_validado (
     id                  INT AUTO_INCREMENT PRIMARY KEY,
     pregunta            TEXT NOT NULL,
     respuesta           TEXT NOT NULL,
@@ -122,145 +155,264 @@ CREATE TABLE IF NOT EXISTS conocimiento_validado (
 );
 ```
 
----
+**Turbovec** — índice vectorial en memoria ultraveloz, recargable sin reiniciar.
 
-## 📦 Instalación
+### Pablo
 
-```bash
-# Crear entorno virtual
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-source .venv/bin/activate      # Linux/Mac
+**MySQL** — múltiples schemas:
 
-# Instalar dependencias
-pip install fastapi uvicorn sqlalchemy pymysql python-dotenv \
-    langchain langchain-google-genai langchain-ollama \
-    langchain-community langchain-anthropic langchain-text-splitters \
-    langgraph pydantic faiss-cpu pypdf
-```
+| Schema | Tablas principales |
+|--------|--------------------|
+| `db_examenes` | examenes, preguntas, examen_preguntas |
+| `db_usuarios` | usuarios, roles, usuario_roles |
+| `db_evaluaciones` | evaluaciones, respuestas_alumno |
+| `db_chatbot_telemetria` | preguntas_correctas, preguntas_incorrectas |
 
----
+**Neo4j** — Knowledge Graph con nodos y relaciones:
+- **Nodos:** Microservicio, BaseDatos, Endpoint, Entidad, Tecnologia, Clase, Metodo...
+- **Relaciones:** LLAMA_A, DEPENDE_DE, GESTIONA, EXPONE, IMPLEMENTA, USA...
 
-## ▶️ Ejecución
-
-### Chatbot (`api_chatbot.py`)
-
-```bash
-uvicorn api_chatbot:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Accede en: `http://localhost:8000`
-
-### Agente creador de proyectos (`agente_creador.py`)
-
-```bash
-py agente_creador.py
-```
-
-Te pedirá una descripción y generará los archivos en `./proyectos_generados/`.
-
-### Agente de análisis de código (`agente_gemini.py`)
-
-```bash
-# Generar tests unitarios para una clase
-py agente_gemini.py --modo tests --clase EvaluacionServiceImpl --microservicio examenes-service
-
-# Analizar bugs y problemas SOLID
-py agente_gemini.py --modo analisis --clase ExamenController --microservicio examenes-service
-
-# Auditoría de seguridad
-py agente_gemini.py --modo seguridad --clase SecurityConfig --microservicio examenes-service
-
-# Refactoring automático
-py agente_gemini.py --modo refactor --clase ReporteServiceImpl --microservicio examenes-service
-
-# Generar documentación Markdown
-py agente_gemini.py --modo docs --todo --microservicio examenes-service
-
-# Generar README.md del proyecto
-py agente_gemini.py --modo readme --microservicio examenes-service
-
-# Generar Dockerfile y docker-compose optimizados
-py agente_gemini.py --modo dockerfile
-
-# Generar script SQL (migraciones, datos de prueba)
-py agente_gemini.py --modo sql --descripcion "Genera datos de prueba para evaluaciones"
-
-# Generar frontend JS/HTML
-py agente_gemini.py --modo frontend --descripcion "Formulario para crear exámenes"
-
-# Modo chat libre con contexto del proyecto completo
-py agente_gemini.py --modo chat --microservicio examenes-service
-```
+**Turbovec** — igual que Jorge.
 
 ---
 
 ## 🌐 Endpoints de la API
 
+### Comunes a ambos
+
+| Método | Endpoint | Jorge | Pablo |
+|--------|----------|-------|-------|
+| `GET` | `/` | ✅ Sirve `index.html` | ✅ Sirve `index.html` |
+| `POST` | `/chat` | ✅ | ✅ |
+| `GET` | `/historial/{id}` | ✅ | ❌ (historial en body) |
+| `GET` | `/chats` | ✅ Lista sesiones | ❌ |
+| `GET` | `/estado` | ✅ Health check | ❌ |
+| `POST` | `/recargar-pdfs` | ✅ | ❌ |
+
+### Exclusivos de Jorge
+
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
-| `GET` | `/` | Sirve la interfaz web (`index.html`) |
-| `POST` | `/chat` | Envía un mensaje al agente |
-| `GET` | `/historial/{session_id}` | Recupera el historial de una sesión |
-| `GET` | `/chats` | Lista todos los IDs de sesión |
-| `GET` | `/estado` | Health check: modelos, BD y RAG |
-| `POST` | `/recargar-pdfs` | Recarga los PDFs sin reiniciar |
-| `POST` | `/github-webhook` | Webhook para auditorías automáticas en cada commit |
+| `POST` | `/github-webhook` | Auditoría automática en cada commit + email |
 
-### Ejemplo de petición al chat
+### Exclusivos de Pablo
 
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `POST` | `/indexar-grafo` | Reconstruye el Knowledge Graph Neo4j |
+| `DELETE` | `/limpiar-grafo` | Elimina todos los nodos y relaciones |
+| `POST` | `/re-evaluar-todo` | Re-evalúa todos los registros históricos |
+| `POST` | `/re-evaluar/{id}` | Re-evalúa un registro individual |
+
+### Formato del endpoint `/chat`
+
+**Jorge:**
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "mi_sesion_1", "mensaje": "¿Cuál es la nota media de los alumnos?"}'
+  -d '{"session_id": "mi_sesion_1", "mensaje": "¿Cuál es la nota media?"}'
 ```
-
-### Respuesta
-
 ```json
 {
   "status": "ok",
-  "respuesta": "La nota media de los alumnos es 6.8 sobre 10.",
+  "respuesta": "La nota media es 6.8 sobre 10.",
   "corregida_por_supervisor": false
+}
+```
+
+**Pablo:**
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"mensaje": "¿Cuántos usuarios hay?", "chat_id": "usuario_123", "historial": []}'
+```
+```json
+{
+  "status": "ok",
+  "respuesta": "Hay 15 usuarios registrados.",
+  "fuente_rag": null,
+  "ruta_usada": "Agente SQL/Grafo",
+  "tiempo_segundos": 0.87
 }
 ```
 
 ---
 
-## 🔔 Webhook de GitHub (Auditoría proactiva)
+## 🔌 Variables de entorno
 
-El endpoint `/github-webhook` escucha eventos `push` de GitHub. Cuando detecta un commit:
+### Jorge — `.env`
 
-1. Identifica los archivos modificados
-2. Mistral genera un informe de auditoría de seguridad y buenas prácticas
-3. El agente te envía el informe automáticamente por **Gmail**
+```env
+DATABASE_URL=mysql+pymysql://root:12345@localhost:3306/examenes
+GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
+GMAIL_USER=tu_correo@gmail.com         # Para el webhook de GitHub
+GMAIL_PASS=tu_app_password_de_gmail    # Contraseña de aplicación Gmail
+PDF_DIR=documentos                      # Opcional, por defecto "documentos"
+```
 
-### Configurar en GitHub
+### Pablo — variables de entorno
 
-Ve a tu repositorio → `Settings` → `Webhooks` → `Add webhook`:
+```env
+# Base de datos
+DATABASE_URL=mysql+pymysql://root:root@db-mysql:3306/db_examenes
+TELEMETRY_DATABASE_URL=mysql+pymysql://root:root@db-mysql:3306/mysql
 
-- **Payload URL:** `https://tu-dominio/github-webhook`
-- **Content type:** `application/json`
-- **Events:** `Just the push event`
+# Knowledge Graph
+NEO4J_URI=bolt://db-neo4j:7687
 
-### Configurar Gmail
+# Motor IA — Groq (producción)
+PROVEEDOR_LLM=groq
+GROQ_API_KEY_CHAT=gsk_...
+GROQ_API_KEY_SUPERVISOR=gsk_...        # API key separada para el supervisor
+MODELO_GROQ=llama-3.1-8b-instant
+MODELO_GROQ_SUPERVISOR=llama-3.1-8b-instant
 
-1. Activa la verificación en dos pasos en tu cuenta Google
-2. Ve a `Cuenta de Google` → `Seguridad` → `Contraseñas de aplicación`
-3. Genera una contraseña para "Mail" y ponla en `GMAIL_PASS` del `.env`
+# Motor IA — Ollama (desarrollo)
+OLLAMA_HOST=http://ollama3:11434
+OLLAMA_SUPERVISOR_HOST=http://ollama-supervisor:11434
+MODELO_LLM=llama3.2
+MODELO_GRAFO=llama3.2:1b
+```
 
 ---
 
-## 📊 Métricas de rendimiento
+## 📦 Instalación y dependencias
 
-Cada respuesta registra automáticamente en `conocimiento_validado`:
+### Jorge
 
-- **Latencia total** (segundos)
-- **Tokens de entrada** (prompt enviado a Mistral)
-- **Tokens de salida** (respuesta generada)
-- **Velocidad** (tokens/segundo)
+```bash
+python -m venv .venv
+.venv\Scripts\activate       # Windows
+source .venv/bin/activate     # Linux/Mac
 
-Se imprimen en consola con este formato:
+pip install fastapi uvicorn sqlalchemy pymysql python-dotenv \
+    langchain langchain-google-genai langchain-ollama \
+    langchain-community langchain-anthropic langchain-text-splitters \
+    langgraph pydantic turbovec pypdf requests
+```
+
+### Pablo — `requirements.txt`
+
+```txt
+fastapi uvicorn pydantic python-dotenv pymysql SQLAlchemy
+pytesseract pdf2image python-docx pypdf
+langchain langchain-openai langchain-community langchain-experimental
+langgraph langchain-text-splitters langchain-ollama
+langchain-neo4j langchain-groq
+faiss-cpu==1.9.0 neo4j
+```
+
+> **Diferencia notable:** Pablo necesita `tesseract-ocr` instalado en el sistema para OCR de PDFs. Jorge usa `PyPDFDirectoryLoader` sin OCR.
+
+---
+
+## ▶️ Ejecución
+
+### Jorge
+
+```bash
+# Chatbot principal
+uvicorn api_chatbot:app --host 0.0.0.0 --port 8000 --reload
+
+# Agente creador de proyectos
+py agente_creador.py
+
+# Herramienta CLI de análisis de código Java
+py agente_gemini.py --modo tests --clase EvaluacionServiceImpl --microservicio examenes-service
+py agente_gemini.py --modo analisis --clase ExamenController --microservicio examenes-service
+py agente_gemini.py --modo seguridad --clase SecurityConfig --microservicio examenes-service
+py agente_gemini.py --modo refactor --clase ReporteServiceImpl --microservicio examenes-service
+py agente_gemini.py --modo docs --todo --microservicio examenes-service
+py agente_gemini.py --modo readme --microservicio examenes-service
+py agente_gemini.py --modo dockerfile
+py agente_gemini.py --modo sql --descripcion "Genera datos de prueba"
+py agente_gemini.py --modo frontend --descripcion "Formulario para crear exámenes"
+py agente_gemini.py --modo chat --microservicio examenes-service
+```
+
+### Pablo
+
+```bash
+# Docker Compose (recomendado — levanta todo)
+git clone https://github.com/Ppacheco306/generador-examenes-back.git
+cd generador-examenes-back
+docker-compose up -d
+
+# Verificar
+curl http://localhost:8000/
+
+# Construir el Knowledge Graph (opcional, tarda 5-10 min)
+curl -X POST http://localhost:8000/indexar-grafo
+
+# Desarrollo local
+pip install -r chatbot/requirements.txt
+cd chatbot
+uvicorn api_chatbot:app --reload --host 0.0.0.0 --port 8000
+```
+
+---
+
+## 🐳 Despliegue
+
+### Jorge — Ollama en Railway
+
+1. Railway → `Deploy from Docker image` → `ollama/ollama`
+2. **Volumes:** monta `/root/.ollama` para persistir modelos
+3. **Networking:** genera dominio público en puerto `11434`
+4. Descarga los modelos desde la consola:
+
+```bash
+ollama pull mistral
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+```
+
+5. Actualiza `URL_OLLAMA` en `api_chatbot.py`
+
+### Pablo — Docker Compose completo
+
+```yaml
+ms-chatbot:
+  build:
+    context: ./chatbot
+    dockerfile: Dockerfile
+  container_name: chatbot-fastapi
+  ports:
+    - "8000:8000"
+  environment:
+    - DATABASE_URL=mysql+pymysql://root:root@db-mysql:3306/db_examenes
+    - NEO4J_URI=bolt://db-neo4j:7687
+    - OLLAMA_HOST=http://ollama3:11434
+    - MODELO_LLM=llama3.2
+  depends_on:
+    db-mysql:
+      condition: service_healthy
+    db-neo4j:
+      condition: service_started
+    ollama-init:
+      condition: service_completed_successfully
+```
+
+**Dockerfile de Pablo** (incluye OCR):
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr tesseract-ocr-spa poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "api_chatbot:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+---
+
+## 📊 Métricas y telemetría
+
+### Jorge — cuadro de mandos en consola + MySQL
+
+Cada petición registra en `conocimiento_validado`:
 
 ```
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -270,48 +422,135 @@ Se imprimen en consola con este formato:
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
 
+### Pablo — telemetría asíncrona en `db_chatbot_telemetria`
+
+El supervisor evalúa cada respuesta en background y la clasifica:
+
+- **`preguntas_correctas`** — respuestas validadas como buenas
+- **`preguntas_incorrectas`** — alucinaciones detectadas con análisis crítico y respuesta mejorada
+
+Criterios de evaluación: datos reales vs inventados, tablas existentes, excepciones SQL expuestas.
+
 ---
 
-## 📄 Gestión de PDFs (RAG)
+## 🔔 Funcionalidades exclusivas
 
-Coloca cualquier PDF en la carpeta `documentos/`. Al arrancar el servidor se vectorizan automáticamente usando `nomic-embed-text` (Ollama). Para recargar sin reiniciar:
+### Jorge — Webhook de GitHub
+
+El endpoint `/github-webhook` escucha eventos `push`. Al detectar un commit:
+1. Identifica archivos modificados
+2. Mistral genera un informe de auditoría de seguridad
+3. El agente envía el informe por **Gmail** automáticamente
 
 ```bash
-curl -X POST http://localhost:8000/recargar-pdfs
+# Configurar en GitHub: Settings → Webhooks → Add webhook
+# Payload URL: https://tu-dominio/github-webhook
+# Content type: application/json
+# Events: Just the push event
 ```
 
----
+Para Gmail: activa verificación en 2 pasos → `Contraseñas de aplicación` → añade a `.env`.
 
-## ☁️ Despliegue de Ollama en Railway
+### Pablo — Knowledge Graph (Neo4j)
 
-1. Nuevo proyecto → `Deploy from Docker image` → imagen: `ollama/ollama`
-2. **Volumes:** monta `/root/.ollama` para persistir los modelos
-3. **Networking:** genera dominio público en puerto `11434`
-4. Descarga los modelos desde la consola de Railway:
+Transforma automáticamente los documentos del proyecto en un grafo de conocimiento:
 
 ```bash
-ollama pull mistral
-ollama pull qwen2.5:7b
-ollama pull nomic-embed-text
+# Reconstruir el grafo desde cero (5-10 minutos)
+curl -X POST http://localhost:8000/indexar-grafo
+
+# Limpiar el grafo
+curl -X DELETE http://localhost:8000/limpiar-grafo
 ```
 
-5. Actualiza `URL_OLLAMA` en `api_chatbot.py` con tu URL de Railway
+### Jorge — Agente creador de proyectos
+
+Genera proyectos completos desde una descripción en lenguaje natural usando LangGraph:
+
+```
+py agente_creador.py
+¿Qué sistema quieres construir?: Una API REST en Spring Boot para gestionar tareas
+→ Crea automáticamente todos los archivos en ./proyectos_generados/
+```
+
+### Jorge — CLI de análisis de código
+
+Analiza, documenta y genera código para proyectos Java directamente desde terminal con acceso al código fuente completo.
 
 ---
 
-## 🔧 Cambiar modelos
+## 🔍 Health checks
 
-Todo se controla con tres variables en `api_chatbot.py`:
+### Jorge
 
-```python
-MODELO_WORKER     = "mistral"         # El que redacta
-MODELO_SUPERVISOR = "qwen2.5:7b"      # El que decide y valida
-MODELO_EMBED      = "nomic-embed-text" # El que vectoriza PDFs
+```bash
+curl http://localhost:8000/estado
+```
+```json
+{
+  "status": "ok",
+  "worker": "mistral",
+  "supervisor": "qwen2.5:7b",
+  "bd_conectada": true,
+  "rag_activo": true
+}
 ```
 
-Y en `agente_creador.py`:
+### Pablo
+
+```bash
+# API
+curl http://localhost:8000/
+
+# MySQL
+mysql -h localhost -u root -proot -e "SELECT VERSION();"
+
+# Neo4j
+curl -u neo4j:rootpassword http://localhost:7474/
+
+# Ollama
+curl http://localhost:11434/api/tags
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+| Problema | Sistema | Solución |
+|----------|---------|----------|
+| `incomplete chunked read` | Jorge | Modelo no existe en Ollama. Verifica con `/api/tags` |
+| `GROQ_API_KEY no definida` | Pablo | `export GROQ_API_KEY_CHAT="gsk_..."` |
+| `Neo4j no conectado` | Pablo | `docker ps \| grep neo4j` |
+| `OCR fallando en PDF` | Pablo | `apt-get install tesseract-ocr tesseract-ocr-spa` |
+| `embedding-001 not found` | Jorge | Usar `models/gemini-embedding-001` sin `models/` prefix |
+| `Respuestas lentas > 5s` | Pablo | Cambiar a Groq en lugar de Ollama local |
+| `[object Object]` en chat | Jorge | Extraer `.content` del AIMessage correctamente |
+
+---
+
+## 📋 Cambiar modelos
+
+### Jorge — `api_chatbot.py`
 
 ```python
-arquitecto_llm  = obtener_modelo("gemini", "gemini-3.1-pro-preview")
-programador_llm = obtener_modelo("local",  "qwen3.5:4b")
+MODELO_WORKER     = "mistral"          # Cambia aquí el que redacta
+MODELO_SUPERVISOR = "qwen2.5:7b"       # Cambia aquí el que valida
+MODELO_EMBED      = "nomic-embed-text" # Cambia aquí el de embeddings
 ```
+
+### Pablo — variables de entorno
+
+```env
+MODELO_GROQ=llama-3.1-8b-instant       # Producción
+MODELO_LLM=llama3.2                    # Desarrollo local
+MODELO_GRAFO=llama3.2:1b               # Para Neo4j (ligero)
+```
+
+---
+
+## 👨‍💻 Autores
+
+| Desarrollador | GitHub | Proyecto |
+|---------------|--------|---------|
+| **Jorge Barriga Rubio** | — | `ia-proyecto/` — Sistema Multi-Agente v4.0 |
+| **Pablo Pacheco** | [@Ppacheco306](https://github.com/Ppacheco306) | `ms-chatbot/` — Microservicio IA con Neo4j |
