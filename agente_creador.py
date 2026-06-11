@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
-from langchain_anthropic import ChatAnthropic # (Si vas a usar Claude en el futuro)
+from langchain_anthropic import ChatAnthropic # (Claude en el futuro)
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 
@@ -48,8 +48,8 @@ def obtener_modelo(entorno: str, nombre_modelo: str):
         raise ValueError(f"Entorno {entorno} no soportado")
 
 # --- ASIGNACIÓN DE ROLES ---
-arquitecto_llm = obtener_modelo("gemini", "gemini-3.1-pro-preview")
-programador_llm = obtener_modelo("local", "qwen3.5:4b")
+programador_llm = obtener_modelo("gemini", "gemini-3.1-pro-preview")
+arquitecto_llm = obtener_modelo("local", "qwen3.5:4b")
 
 # Forzamos al Arquitecto a devolver SÓLO la estructura JSON
 arquitecto_json = arquitecto_llm.with_structured_output(PlanProyecto)
@@ -114,7 +114,12 @@ def nodo_programador(state: EstadoProyecto):
         if hasattr(respuesta, 'tool_calls') and respuesta.tool_calls:
             for llamada in respuesta.tool_calls:
                 if llamada['name'] == 'crear_archivo':
-                    resultado = crear_archivo.invoke(llamada['args'])
+                    args = llamada['args']
+                    # Blindaje: si contenido es dict/list, lo serializa a string
+                    if 'contenido' in args and not isinstance(args['contenido'], str):
+                        import json
+                        args['contenido'] = json.dumps(args['contenido'], indent=2, ensure_ascii=False)
+                    resultado = crear_archivo.invoke(args)
                     print(f"   {resultado}")
         else:
             print(f"   ⚠️ El modelo falló al usar la herramienta para {archivo.ruta_relativa}")

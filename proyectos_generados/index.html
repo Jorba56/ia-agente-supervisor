@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Página principal de ejemplo con estructura semántica, accesibilidad y jerarquía visual.">
+    <title>Estructura Semántica y Accesible</title>
+    <!-- Estilos CSS irían aquí -->
+</head>
+<body>
+    <!-- Enlace para saltar al contenido principal (Accesibilidad) -->
+    <a href="#main-content" class="skip-link" style="position: absolute; left: -9999px; z-index: 999; padding: 1em; background-color: black; color: white; opacity: 0;">Saltar al contenido principal</a>
+
+    <header role="banner">
+        <h1>Mi Sitio Web Accesible</h1>
+        <nav role="navigation" aria-label="Navegación principal">
+            <ul>
+                <li><a href="#inicio" aria-current="page">Inicio</a></li>
+                <li><a href="#servicios">Servicios</a></li>
+                <li><a href="#acerca">Acerca de</a></li>
+                <li><a href="#contacto">Contacto</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content" role="main">
+        <section id="inicio" aria-labelledby="inicio-title">
+            <h2 id="inicio-title">Bienvenido a nuestro sitio</h2>
+            <p>Esta página está diseñada utilizando etiquetas semánticas de HTML5 para garantizar una correcta jerarquía visual y soporte para lectores de pantalla.</p>
+        </section>
+
+        <section id="servicios" aria-labelledby="servicios-title">
+            <h2 id="servicios-title">Nuestros Servicios</h2>
+            
+            <article aria-labelledby="servicio-web-title">
+                <h3 id="servicio-web-title">Desarrollo Web Semántico</h3>
+                <p>Construimos interfaces robustas y accesibles que mejoran el SEO y la experiencia de usuario.</p>
+            </article>
+
+            <article aria-labelledby="servicio-a11y-title">
+                <h3 id="servicio-a11y-title">Auditoría de Accesibilidad</h3>
+                <p>Revisamos tu sitio web para asegurar el cumplimiento de las pautas WCAG 2.1.</p>
+            </article>
+        </section>
+
+        <aside aria-labelledby="aside-title">
+            <h2 id="aside-title">Información Adicional</h2>
+            <p>Suscríbete a nuestro boletín para recibir las últimas noticias sobre desarrollo web y accesibilidad.</p>
+        </aside>
+    </main>
+
+    <footer role="contentinfo">
+        <p>&copy; 2023 Mi Sitio Web Accesible. Todos los derechos reservados.</p>
+        <nav aria-label="Navegación del pie de página">
+            <ul>
+                <li><a href="/privacidad.html">Política de Privacidad</a></li>
+                <li><a href="/terminos.html">Términos de Servicio</a></li>
+            </ul>
+        </nav>
+    </footer>
+</body>
+</html>
